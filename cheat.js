@@ -3,7 +3,7 @@ const SUPA_KEY = "sb_publishable_0vh5J0rfiHxGOxkwGZuBYA_YBo-xblo";
 const USER_AGENT_ASLI = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 
 let AUTH_BEARER = "Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6IjlmNmRiY2ExLWIzOTItNDY4YS1iZWNiLTE0MjgzZjI0N2JlOCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2duamNtcnFmb29hbGh5bm9nZXl0LnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiI3YTc4ODIyZi01MWVlLTQzMDItOGVhOC1jMGM4NjBjNTIyNGEiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzgyMTQ0MjY0LCJpYXQiOjE3ODIxNDA6NjQsImVtYWlsIjoic2V2ZW5rbmlnaHRhcGlzQGdtYWlsLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sYXVzZXJfbWV0YWRhdGEiOnsiZW1haWwiOiJzZXZlbmtuaWdodGFwaXNAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiN2E3ODgyMmYtNTFlZS00MzAyLThlYTgtYzBjODYwYzUyMjRhIiwidXNlcm5hbWUiOiJhcGlzMyJ9LCJyb2xlIjoiYXV0aGVudGifikFkIiwiYWFsIjoiYWFsaSIsImFtcilbXX0sInNlc3NiproiOiJkN2ZlNzIzNS03MzNiLTQwZmUtOWRlZi00Y2FiNzViOGMzNDAiLCJpc19hbm9ueW1vdXMiOmZhbHNlfQ.lCmelW-8h5jVIAFQUiL3Ypgn_CykcvU7O7ULLEUksSjcZ7mlGY1hP1zgl82NweUJ4D2_ID0-dEB1Ip38Wy12FA";
-let REFRESH_TOKEN = "7qiuqzebzs7y"; // ✅ DISESUAIKAN: Berdasarkan token sukses di log terakhir lu
+let REFRESH_TOKEN = "7qiuqzebzs7y"; // ✅ Token refresh paling bugar dari putaran terakhir lu
 
 const TIPE_PACK_GACHA = "bronze"; 
 const HARGA_PACK_GACHA = 600; 
@@ -40,30 +40,30 @@ async function autoRefreshToken() {
     return false;
 }
 
-// 🧠 LOGIKA SAKTI UPDATE TOTAL: Menggunakan tabel 'lc_squads' dan Kirim Raw Array payload
+// 🧠 LOGIKA SAKTI: Sinkronisasi lc_squads, rotasi otomatis, dan log kalkulasi Value/Cap tim
 async function kelolaSkuadDanRotasi() {
     const idStarter = new Set();
     try {
-        // 1. Ambil data Skuad Aktif dari tabel yang BENAR: lc_squads (pake 's')
+        // 1. Ambil data Skuad Aktif dari tabel yang terbukti valid: lc_squads
         const resLineup = await fetch(`${SUPA_URL}/rest/v1/lc_squads?select=*`, { headers: HEADERS_SILUMAN });
         if (!resLineup.ok) {
-            console.log(`❌ [ERROR] Gagal hit tabel lc_squads. Code: ${resLineup.status}`);
+            console.log(`❌ [SQUAD DETECT FAILED] Gagal membaca tabel lc_squads.`);
             return idStarter;
         }
         const lineupMentah = await resLineup.json();
 
-        // 2. Ambil data Roster Gudang untuk ngecek stamina/form
+        // 2. Ambil data Roster Gudang untuk cek stamina (form)
         const resRoster = await fetch(`${SUPA_URL}/rest/v1/lc_roster?select=*`, { headers: HEADERS_SILUMAN });
         const rosterMentah = await resRoster.json();
         const mapRoster = new Map(rosterMentah.map(r => [Number(r.player_id), r]));
 
-        // 3. Ambil Katalog Publik untuk nama & OVR dasar
+        // 3. Ambil Katalog Publik untuk dapetin nama & OVR dasar
         const allPlayerIds = rosterMentah.map(r => r.player_id);
         const resKat = await fetch(`${SUPA_URL}/rest/v1/lc_players_public?id=in.(${allPlayerIds.join(',')})`, { headers: HEADERS_SILUMAN });
         const katalog = await resKat.json();
         const mapKat = new Map(katalog.map(p => [p.id, p]));
 
-        // Petakan pemain yang sedang nempel di lineup aktif beserta kondisinya
+        // Susun daftar pemain yang menempati pos starter utama saat ini
         let lineupAktif = lineupMentah.map((p, index) => {
             const rData = mapRoster.get(Number(p.player_id));
             return {
@@ -87,7 +87,7 @@ async function kelolaSkuadDanRotasi() {
                     return { player_id: Number(r.player_id), form: r.form ?? 0, ovr: totalOvr };
                 });
 
-            // Urutkan cadangan bugar dari OVR tertinggi
+            // Urutkan cadangan bugar berdasarkan OVR tertinggi
             benchSehat.sort((a, b) => b.ovr - a.ovr);
 
             let jumlahRotasi = 0;
@@ -104,27 +104,32 @@ async function kelolaSkuadDanRotasi() {
                 return p;
             });
 
-            // FIX PAYLOAD: Kirim langsung berbentuk Raw Array tanpa dibungkus objek { squad: ... }
+            // Kirim taktik baru ke server jika ada perubahan komposisi pemain inti
             if (jumlahRotasi > 0) {
-                console.log(`📡 Menembak /set-squad dengan formasi bugar terbaru...`);
-                const payloadRawArray = lineupAktif.map(p => ({ player_id: p.player_id, slot: p.slot }));
+                console.log(`📡 Menembak /set-squad untuk memperbarui susunan formasi bugar...`);
+                
+                // Server lu fleksibel, mari kirim langsung payload data terstruktur array-nya
+                const rawPayloadArray = lineupAktif.map(p => ({ player_id: p.player_id, slot: p.slot }));
                 
                 const resSet = await fetch(`${SUPA_URL}/functions/v1/set-squad`, {
                     method: 'POST',
                     headers: HEADERS_SILUMAN,
-                    body: JSON.stringify(payloadRawArray) 
+                    body: JSON.stringify(rawPayloadArray)
                 });
                 
                 if (resSet.ok) {
-                    console.log(`\x1b[32m✅ [SQUAD UPDATED] Sukses sinkronisasi formasi bugar ke server!\x1b[0m`);
+                    const squadStats = await resSet.json();
+                    console.log(`\x1b[32m✅ [SQUAD UPDATED] Formasi bugar berhasil disinkronisasi ke server!\x1b[0m`);
+                    // 🛡️ NILAI VALUE DAN CAP DI-LOG DI SINI
+                    console.log(`📈 [SQUAD PERFORMANCE] Value: \x1b[36m${squadStats.squadValue}\x1b[0m / Batas Cap: \x1b[35m${squadStats.cap}\x1b[0m (ID: ${squadStats.squadId || '?'})`);
                 } else {
-                    console.log(`❌ [SQUAD FAILED] Server nolak rotasi. Code: ${resSet.status} - ${await resSet.text()}`);
+                    console.log(`❌ [SQUAD FAILED] Server menolak struktur formasi baru. Status: ${resSet.status}`);
                 }
             }
         }
 
-        // 📋 CETAK LOG STATUS SQUAD AKTIF SEBENARNYA
-        console.log(`\n📋 [SQUAD STATUS] Daftar Pemain Utama (Active XI Real-time):`);
+        // 📋 LOG STATUS CETAK DETAIL SQUAD AKTIF
+        console.log(`\n📋 [SQUAD STATUS] Daftar Pemain Utama (Active XI Terproteksi):`);
         lineupAktif.forEach(p => {
             idStarter.add(p.player_id);
             const c = mapKat.get(p.player_id);
@@ -264,12 +269,12 @@ async function autoBukaPackGachaSultan() {
 }
 
 async function jalankanLoopMatchGame() {
-    console.log(`\n\x1b[35m⚽ [ENGINE] PC LOKAL MODE V29 RUNNING MENGGUNAKAN FITUR ROTASI SAKTI...\x1b[0m\n`);
+    console.log(`\n\x1b[35m⚽ [ENGINE] PC LOKAL MODE V29 RUNNING MENGGUNAKAN FITUR ROTASI SAKTI & VALUE MONITOR...\x1b[0m\n`);
     while (true) {
         console.log(`--------------------------------------------------`);
         
         try {
-            // 🛡️ TAHAP 1: Kelola skuad real dari 'lc_squads', log status stamina, dan eksekusi rotasi bugar
+            // 🛡️ TAHAP 1: Ambil data dari lc_squads, log status stamina, dan sinkronisasi rotasi bugar
             const skuadUtamaAmankan = await kelolaSkuadDanRotasi();
 
             console.log(`🚀 [MATCH #${matchCounter}] Menembak Kickoff Pertandingan...`);
@@ -291,7 +296,7 @@ async function jalankanLoopMatchGame() {
                 console.log(`❌ [MATCH FAILED] Gagal tanding.`);
             }
 
-            // 🪙 TAHAP 2: Log dompet wallet & auto gacha pack
+            // 🪙 TAHAP 2: Log saldo koin dompet & eksekusi auto-gacha pack
             const checkProf = await fetch(`${SUPA_URL}/rest/v1/lc_profiles?select=coins`, { headers: HEADERS_SILUMAN });
             if (checkProf.ok) {
                 const profData = await checkProf.json();
@@ -303,7 +308,7 @@ async function jalankanLoopMatchGame() {
                 }
             }
 
-            // 🔥 TAHAP 3: Jalankan SBC dengan proteksi Skuad Utama asli 100% akurat dari database
+            // 🔥 TAHAP 3: Jalankan proses SBC dengan proteksi Skuad Utama asli 100% dari database
             await jalankanProsesSbcOtomatis(skuadUtamaAmankan);
 
         } catch (e) {
