@@ -23,11 +23,13 @@ const HEADERS_SILUMAN = {
 async function autoRefreshToken() {
     console.log(`\n🔄 [SYSTEM AUTO-HEAL] Token expired! Meminta tiket akses baru...`);
     try {
+        console.log(`[HTTP Request] POST ${SUPA_URL}/auth/v1/token?grant_type=refresh_token`);
         const response = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=refresh_token`, {
             method: 'POST',
             headers: { "apikey": SUPA_KEY, "Content-Type": "application/json", "origin": "https://34-0.xyz", "referer": "https://34-0.xyz/", "user-agent": USER_AGENT_ASLI },
             body: JSON.stringify({ refresh_token: REFRESH_TOKEN })
         });
+        console.log(`[HTTP Response] Status: ${response.status} for auth token refresh`);
         if (response.ok) {
             const data = await response.json();
             AUTH_BEARER = `Bearer ${data.access_token}`; 
@@ -36,34 +38,40 @@ async function autoRefreshToken() {
             console.log(`\x1b[32m✅ [HEAL SUKSES] Tiket diperbarui!\x1b[0m\n`);
             return true;
         }
-    } catch (e) {}
+    } catch (e) {
+        console.log(`💥 [REFRESH ERROR] Gagal refresh token: ${e.message}`);
+    }
     return false;
 }
 
-// 🧠 FITUR IN-OUT LU: Menggunakan tabel 'lc_squads' dan Kirim Raw Array payload
 async function kelolaSkuadDanRotasi() {
     const idStarter = new Set();
     try {
-        // 1. Ambil data Skuad Aktif dari tabel yang BENAR: lc_squads (pake 's')
+        console.log(`[kelolaSkuadDanRotasi] Memulai kelolaSkuadDanRotasi...`);
+        
+        // 1. Ambil data Skuad Aktif dari tabel lc_squads
+        console.log(`[HTTP Request] GET ${SUPA_URL}/rest/v1/lc_squads?select=*`);
         const resLineup = await fetch(`${SUPA_URL}/rest/v1/lc_squads?select=*`, { headers: HEADERS_SILUMAN });
-        if (!resLineup.ok) {
-            console.log(`❌ [ERROR] Gagal hit tabel lc_squads. Code: ${resLineup.status}`);
-            return idStarter;
-        }
+        console.log(`[HTTP Response] Status: ${resLineup.status} for GET lc_squads`);
+        if (!resLineup.ok) return idStarter;
         const lineupMentah = await resLineup.json();
 
-        // 2. Ambil data Roster Gudang untuk ngecek stamina/form
+        // 2. Ambil data Roster Gudang
+        console.log(`[HTTP Request] GET ${SUPA_URL}/rest/v1/lc_roster?select=*`);
         const resRoster = await fetch(`${SUPA_URL}/rest/v1/lc_roster?select=*`, { headers: HEADERS_SILUMAN });
+        console.log(`[HTTP Response] Status: ${resRoster.status} for GET lc_roster`);
         const rosterMentah = await resRoster.json();
         const mapRoster = new Map(rosterMentah.map(r => [Number(r.player_id), r]));
 
-        // 3. Ambil Katalog Publik untuk nama & OVR dasar
+        // 3. Ambil Katalog Publik Pemain
         const allPlayerIds = rosterMentah.map(r => r.player_id);
+        console.log(`[HTTP Request] GET ${SUPA_URL}/rest/v1/lc_players_public?id=in.(${allPlayerIds.join(',')})`);
         const resKat = await fetch(`${SUPA_URL}/rest/v1/lc_players_public?id=in.(${allPlayerIds.join(',')})`, { headers: HEADERS_SILUMAN });
+        console.log(`[HTTP Response] Status: ${resKat.status} for GET lc_players_public`);
         const katalog = await resKat.json();
         const mapKat = new Map(katalog.map(p => [p.id, p]));
 
-        // Petakan pemain yang sedang nempel di lineup aktif beserta kondisinya
+        // Petakan pemain di Active XI saat ini beserta staminanya (form)
         let lineupAktif = lineupMentah.map((p, index) => {
             const rData = mapRoster.get(Number(p.player_id));
             return {
@@ -87,7 +95,7 @@ async function kelolaSkuadDanRotasi() {
                     return { player_id: Number(r.player_id), form: r.form ?? 0, ovr: totalOvr };
                 });
 
-            // Urutkan cadangan bugar dari OVR tertinggi
+            // Urutkan pemain cadangan sehat dari OVR paling tinggi
             benchSehat.sort((a, b) => b.ovr - a.ovr);
 
             let jumlahRotasi = 0;
@@ -97,37 +105,39 @@ async function kelolaSkuadDanRotasi() {
                     const namaCapek = mapKat.get(p.player_id)?.name || `ID ${p.player_id}`;
                     const namaSehat = mapKat.get(pengganti.player_id)?.name || `ID ${pengganti.player_id}`;
                     
-                    console.log(`   Bagian IN-OUT -> 🔁 Tukar: Slot [${p.slot}] ❌ ${namaCapek} (Form: ${p.form}) OUT -> 🔥 ${namaSehat} (Form: ${pengganti.form}) IN`);
+                    console.log(`   🔁 [Slot ${p.slot}] ❌ ${namaCapek} (Form:${p.form}) OUT -> 🔥 ${namaSehat} (Form:${pengganti.form}) IN`);
                     jumlahRotasi++;
                     return { player_id: pengganti.player_id, slot: p.slot, form: pengganti.form };
                 }
                 return p;
             });
 
-            // FIX PAYLOAD: Kirim langsung berbentuk Raw Array tanpa dibungkus objek { squad: ... }
+            // FIX PAYLOAD UTAMA: Mengirimkan RAW ARRAY langsung tanpa dibungkus objek { squad: [] }
             if (jumlahRotasi > 0) {
-                console.log(`📡 Menembak /set-squad dengan formasi bugar terbaru...`);
                 const payloadRawArray = lineupAktif.map(p => ({ player_id: p.player_id, slot: p.slot }));
+                console.log(`📡 Menembak /set-squad dengan raw array terbaru...`);
+                console.log(`[HTTP Request] POST ${SUPA_URL}/functions/v1/set-squad`);
                 
                 const resSet = await fetch(`${SUPA_URL}/functions/v1/set-squad`, {
                     method: 'POST',
                     headers: HEADERS_SILUMAN,
                     body: JSON.stringify(payloadRawArray) 
                 });
+                console.log(`[HTTP Response] Status: ${resSet.status} for POST set-squad`);
                 
                 if (resSet.ok) {
                     const resStats = await resSet.json();
                     console.log(`\x1b[32m✅ [SQUAD UPDATED] Sukses sinkronisasi formasi bugar ke server!\x1b[0m`);
-                    // 📊 CETAK VALUE MONITOR REAL-TIME DISINI, BRO!
-                    console.log(`📈 [SQUAD VALUE] ID Skuad: ${resStats.squadId} | Value Tim: \x1b[36m${resStats.squadValue}\x1b[0m | Batas Cap: \x1b[35m${resStats.cap}\x1b[0m`);
+                    // 🔥 FITUR SQUAD VALUE YANG LU CARI SEKARANG TAMPIL DI SINI:
+                    console.log(`📈 [VALUE MONITOR] Squad ID: ${resStats.squadId} | Squad Value: \x1b[36m${resStats.squadValue}\x1b[0m | Batas Cap: \x1b[35m${resStats.cap}\x1b[0m`);
                 } else {
-                    console.log(`❌ [SQUAD FAILED] Server nolak rotasi. Code: ${resSet.status} - ${await resSet.text()}`);
+                    console.log(`❌ [SQUAD FAILED] Server nolak rotasi. Alasan: ${await resSet.text()}`);
                 }
             }
         }
 
-        // 📋 CETAK LOG STATUS SQUAD AKTIF SEBENARNYA
-        console.log(`\n📋 [SQUAD STATUS] Daftar Pemain Utama (Active XI Real-time):`);
+        // 📋 CETAK LOG VERBOSE DETAIL STATUS SQUAD AKTIF LU
+        console.log(`\n📋 [SQUAD STATUS] Active XI (11 pemain):`);
         lineupAktif.forEach(p => {
             idStarter.add(p.player_id);
             const c = mapKat.get(p.player_id);
@@ -141,7 +151,7 @@ async function kelolaSkuadDanRotasi() {
                 else if (kasta.includes("SILVER")) warna = "\x1b[34m";  
                 else if (kasta.includes("LEGEN") || kasta.includes("ICON")) warna = "\x1b[35m"; 
 
-                console.log(`   ├─ ⚽ [Slot ${p.slot}] ${warna}${c.name}\x1b[0m (OVR: ${totalOvr} | Form: ${p.form} | TIER: ${kasta})`);
+                console.log(`   ├─ ⚽ [Slot ${p.slot}] ${warna}${c.name}\x1b[0m (OVR:${totalOvr} | Form:${p.form} | ${kasta})`);
             }
         });
         console.log(``);
@@ -173,14 +183,19 @@ function logDaftarPemainBaru(prefix, dataMurni) {
 }
 
 async function jalankanProsesSbcOtomatis(idParaStarter = new Set()) {
-    console.log(`⚙️ [SBC INSPECTOR] Memindai gudang ampas dengan rumus valid: 5 Silver + 3 Bronze...`);
+    console.log(`[Loop Match Game] TAHAP 4: Menjalankan proses SBC otomatis...`);
+    console.log(`⚙️ [SBC INSPECTOR] Memindai gudang ampas (5 Silver + 3 Bronze)...`);
     try {
+        console.log(`[HTTP Request] GET ${SUPA_URL}/rest/v1/lc_roster?select=*`);
         const resRos = await fetch(`${SUPA_URL}/rest/v1/lc_roster?select=*`, { headers: HEADERS_SILUMAN });
+        console.log(`[HTTP Response] Status: ${resRos.status} for GET lc_roster`);
         const rosterMentah = await resRos.json();
         if (!rosterMentah || rosterMentah.length === 0) return;
 
         const playerIds = [...new Set(rosterMentah.map(r => r.player_id))];
+        console.log(`[HTTP Request] GET ${SUPA_URL}/rest/v1/lc_players_public?id=in.(${playerIds.join(',')})`);
         const resKat = await fetch(`${SUPA_URL}/rest/v1/lc_players_public?id=in.(${playerIds.join(',')})`, { headers: HEADERS_SILUMAN });
+        console.log(`[HTTP Response] Status: ${resKat.status} for GET lc_players_public`);
         const katalog = await resKat.json();
         const mapKat = new Map(katalog.map(p => [p.id, p]));
 
@@ -214,35 +229,40 @@ async function jalankanProsesSbcOtomatis(idParaStarter = new Set()) {
             }
         });
 
-        console.log(`🛡️ [BRANKAS SECURE] Terkunci Aman: \x1b[33m${countGoldProtected} Gold\x1b[0m | \x1b[36m${countOvrProtected} OVR 75+\x1b[0m | \x1b[32m${countStarterProtected} Skuad Utama\x1b[0m | \x1b[35m${countBlacklistedProtected} Auto-Blacklist\x1b[0m`);
+        console.log(`🛡️ [BRANKAS SECURE] Terkunci: ${countGoldProtected} Gold | ${countOvrProtected} OVR 75+ | ${countStarterProtected} Skuad Utama | ${countBlacklistedProtected} Auto-Blacklist`);
 
         const silverSampah = kandidatSbc.filter(p => p.ovr >= 67);
         const bronzeSampah = kandidatSbc.filter(p => p.ovr <= 66);
 
-        console.log(`📊 [SBC STATS] Keranjang Sampah -> Punya: \x1b[34m${silverSampah.length}/5 Silver\x1b[0m | \x1b[31m${bronzeSampah.length}/3 Bronze\x1b[0m`);
+        console.log(`📊 [SBC STATS] Silver Trash: ${silverSampah.length} | Bronze Trash: ${bronzeSampah.length}`);
 
         if (silverSampah.length >= 5 && bronzeSampah.length >= 3) {
             const listTumbalResmi = [];
             for (let i = 0; i < 5; i++) listTumbalResmi.push({ player_id: silverSampah[i].player_id, star: 1 });
             for (let i = 0; i < 3; i++) listTumbalResmi.push({ player_id: bronzeSampah[i].player_id, star: 1 });
 
-            console.log(`🔥 [AUTO-SBC EXECUTE] Mengirim paket tumbal (5 Silver + 3 Bronze) ke server...`);
+            console.log(`🔥 [AUTO-SBC] Mengirim 5 Silver + 3 Bronze...`);
+            listTumbalResmi.forEach((t, idx) => {
+                const pNama = mapKat.get(t.player_id)?.name || 'Unknown';
+                console.log(`   [${idx + 1}] ${pNama} (ID:${t.player_id})`);
+            });
+
             const response = await fetch(`${SUPA_URL}/functions/v1/submit-sbc`, { method: 'POST', headers: HEADERS_SILUMAN, body: JSON.stringify({ sbc_id: "silver_exch", cards: listTumbalResmi }) });
             
             if (response.ok) {
                 const sbcResult = await response.json();
-                console.log(`\x1b[32m🎁 [SBC SUCCESS] LEGENDA! Racikan 5 Silver + 3 Bronze tembus, 1 SILVER PACK cair!\x1b[0m`);
+                console.log(`\x1b[32m🎁 [SBC SUCCESS] LEGENDA! Racikan tembus, 1 SILVER PACK cair!\x1b[0m`);
                 logDaftarPemainBaru("SBC", sbcResult);
             } else {
                 const errorText = await response.text();
                 console.log(`❌ [SBC FAILED] Server nolak. Alasan: ${errorText}`);
                 if (errorText.includes("active XI") || errorText.includes("sacrifice")) {
-                    console.log(`⚠️ [ANTI-CRASH] Mem-blacklist ${listTumbalResmi.length} ID kartu dari list SBC putaran depan...`);
+                    console.log(`⚠️ [BLACKLIST] Mem-blacklist ${listTumbalResmi.length} kartu...`);
                     listTumbalResmi.forEach(t => SBC_BLACKLIST.add(t.player_id));
                 }
             }
         } else {
-            console.log(`📋 [SBC SKIP] Dilewati, kuota gudang sampah belum genap.`);
+            console.log(`📋 [SBC SKIP] Belum cukup kartu (butuh 5 Silver + 3 Bronze).`);
         }
     } catch (e) {
         console.log(`💥 [SBC ERROR] Gagal scan gudang: ${e.message}`);
@@ -250,7 +270,11 @@ async function jalankanProsesSbcOtomatis(idParaStarter = new Set()) {
 }
 
 async function klaimMisiKoin() {
-    try { await fetch(`${SUPA_URL}/functions/v1/claim-mission`, { method: 'POST', headers: HEADERS_SILUMAN }); } catch (e) {}
+    console.log(`[Loop Match Game] TAHAP 2: Klaim misi...`);
+    try { 
+        const res = await fetch(`${SUPA_URL}/functions/v1/claim-mission`, { method: 'POST', headers: HEADERS_SILUMAN }); 
+        if (!res.ok) console.log(`⚠️ [MISI FAILED] Status: ${res.status}. Body: ${await res.text()}`);
+    } catch (e) {}
 }
 
 async function autoBukaPackGachaSultan() {
@@ -267,20 +291,24 @@ async function autoBukaPackGachaSultan() {
 }
 
 async function jalankanLoopMatchGame() {
-    console.log(`\n\x1b[35m⚽ [ENGINE] PC LOKAL MODE V32 RUNNING (ALUR SINKRON ANTI-KEBALIK)...\x1b[0m\n`);
+    console.log(`\n\x1b[35m⚽ [ENGINE] PC LOKAL MODE V32 RUNNING (ALUR VERBOSE & REKONDISI ANTI-KEBALIK)...\x1b[0m\n`);
     while (true) {
         console.log(`--------------------------------------------------`);
+        console.log(`[Loop Match Game] [Iterasi MATCH #${matchCounter}] Mulai...`);
         
         try {
-            // 🛡️ TAHAP 0 (UTAMA): CEK & FORCE TOKEN VALIDATION DULUAN SEBELUM SQUAD SCAN
+            // 🛡️ TAHAP 0 (UTAMA): REFRESH TOKEN SECARA PROAKTIF DI AWAL LOOP SEBELUM APAPUN JALAN
+            console.log(`[Loop Match Game] TAHAP 0: Validasi kredensial akses...`);
             const checkProf = await fetch(`${SUPA_URL}/rest/v1/lc_profiles?select=coins`, { headers: HEADERS_SILUMAN });
             if (checkProf.status === 401) {
+                console.log(`[HTTP Response] 401 Detected. Triggering autoRefreshToken...`);
                 const suksesHeal = await autoRefreshToken(); 
                 if (!suksesHeal) await new Promise(r => setTimeout(r, 10000));
-                continue; // Lempar ulang ke atas biar putaran berikutnya dapet token fresh!
+                continue; // Paksa balik ke root loop atas biar dapetin token fresh!
             }
 
-            // 🛡️ TAHAP 1: Kelola skuad real (Sekarang aman pake token bugar 100%)
+            // 🛡️ TAHAP 1: Eksekusi Fitur In-Out Rotasi Lu
+            console.log(`[Loop Match Game] TAHAP 1: Mengelola skuad dan rotasi...`);
             const skuadUtamaAmankan = await kelolaSkuadDanRotasi();
 
             // 🚀 TAHAP 2: Kickoff Match
@@ -297,24 +325,28 @@ async function jalankanLoopMatchGame() {
                 console.log(`❌ [MATCH FAILED] Gagal tanding.`);
             }
 
-            // 🪙 TAHAP 3: Log Dompet & Auto Gacha
+            // 🪙 TAHAP 3: Cek Dompet & Gacha
+            console.log(`[Loop Match Game] TAHAP 3: Cek Wallet & Gacha...`);
             if (checkProf.ok) {
                 const profData = await checkProf.json();
                 const totalCoinSekarang = profData[0]?.coins ?? 0;
-                console.log(`💰 [WALLET] Total saldo koin lu saat ini: \x1b[33m${totalCoinSekarang.toLocaleString()} Coin\x1b[0m`);
+                console.log(`💰 [WALLET] Saldo: \x1b[33m${totalCoinSekarang.toLocaleString()} Coin\x1b[0m`);
 
                 if (totalCoinSekarang >= HARGA_PACK_GACHA) {
                     await autoBukaPackGachaSultan();
+                } else {
+                    console.log(`[Loop Match Game] Saldo koin tidak cukup untuk gacha (${totalCoinSekarang} < ${HARGA_PACK_GACHA}).`);
                 }
             }
 
-            // 🔥 TAHAP 4: Jalankan SBC dengan proteksi Skuad Utama asli terupdate
+            // 🔥 TAHAP 4: Jalankan SBC Otomatis dengan proteksi penuh
             await jalankanProsesSbcOtomatis(skuadUtamaAmankan);
 
         } catch (e) {
             console.log(`💥 [LOOP ERROR] Koneksi interupsi: ${e.message}`);
         }
         
+        console.log(`[Loop Match Game] Iterasi selesai. Menunggu 3 detik...`);
         await new Promise(r => setTimeout(r, 3000));
     }
 }
