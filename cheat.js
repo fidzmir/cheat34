@@ -40,10 +40,11 @@ async function autoRefreshToken() {
     return false;
 }
 
+// 🧠 FITUR IN-OUT LU: Menggunakan tabel 'lc_squads' dan Kirim Raw Array payload
 async function kelolaSkuadDanRotasi() {
     const idStarter = new Set();
     try {
-        // 1. Ambil data Skuad Aktif dari lc_squads
+        // 1. Ambil data Skuad Aktif dari tabel yang BENAR: lc_squads (pake 's')
         const resLineup = await fetch(`${SUPA_URL}/rest/v1/lc_squads?select=*`, { headers: HEADERS_SILUMAN });
         if (!resLineup.ok) {
             console.log(`❌ [ERROR] Gagal hit tabel lc_squads. Code: ${resLineup.status}`);
@@ -62,7 +63,7 @@ async function kelolaSkuadDanRotasi() {
         const katalog = await resKat.json();
         const mapKat = new Map(katalog.map(p => [p.id, p]));
 
-        // Susun struktur pemain aktif saat ini beserta performa trendnya
+        // Petakan pemain yang sedang nempel di lineup aktif beserta kondisinya
         let lineupAktif = lineupMentah.map((p, index) => {
             const rData = mapRoster.get(Number(p.player_id));
             return {
@@ -96,14 +97,14 @@ async function kelolaSkuadDanRotasi() {
                     const namaCapek = mapKat.get(p.player_id)?.name || `ID ${p.player_id}`;
                     const namaSehat = mapKat.get(pengganti.player_id)?.name || `ID ${pengganti.player_id}`;
                     
-                    console.log(`   🔁 Tukar: Slot [${p.slot}] ❌ ${namaCapek} (Form: ${p.form}) OUT -> 🔥 ${namaSehat} (Form: ${pengganti.form}) IN`);
+                    console.log(`   Bagian IN-OUT -> 🔁 Tukar: Slot [${p.slot}] ❌ ${namaCapek} (Form: ${p.form}) OUT -> 🔥 ${namaSehat} (Form: ${pengganti.form}) IN`);
                     jumlahRotasi++;
                     return { player_id: pengganti.player_id, slot: p.slot, form: pengganti.form };
                 }
                 return p;
             });
 
-            // Kirim langsung berbentuk Raw Array tanpa dibungkus objek
+            // FIX PAYLOAD: Kirim langsung berbentuk Raw Array tanpa dibungkus objek { squad: ... }
             if (jumlahRotasi > 0) {
                 console.log(`📡 Menembak /set-squad dengan formasi bugar terbaru...`);
                 const payloadRawArray = lineupAktif.map(p => ({ player_id: p.player_id, slot: p.slot }));
@@ -117,7 +118,7 @@ async function kelolaSkuadDanRotasi() {
                 if (resSet.ok) {
                     const resStats = await resSet.json();
                     console.log(`\x1b[32m✅ [SQUAD UPDATED] Sukses sinkronisasi formasi bugar ke server!\x1b[0m`);
-                    // 📊 CETAK VALUE MONITOR REAL-TIME
+                    // 📊 CETAK VALUE MONITOR REAL-TIME DISINI, BRO!
                     console.log(`📈 [SQUAD VALUE] ID Skuad: ${resStats.squadId} | Value Tim: \x1b[36m${resStats.squadValue}\x1b[0m | Batas Cap: \x1b[35m${resStats.cap}\x1b[0m`);
                 } else {
                     console.log(`❌ [SQUAD FAILED] Server nolak rotasi. Code: ${resSet.status} - ${await resSet.text()}`);
