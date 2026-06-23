@@ -8,7 +8,7 @@ let REFRESH_TOKEN = "7qiuqzebzs7y";
 const TIPE_PACK_GACHA = "bronze"; 
 const HARGA_PACK_GACHA = 600; 
 let matchCounter = 1;
-const SBC_BLACKLIST = new Set(); // 🛡️ Tameng utama pendeteksi Active XI otomatis dari respon server
+const SBC_BLACKLIST = new Set(); // 🛡️ Brankas pengunci otomatis jika ada kartu lolos sensor
 
 const HEADERS_SILUMAN = {
     "accept": "*/*",
@@ -21,7 +21,7 @@ const HEADERS_SILUMAN = {
 };
 
 async function autoRefreshToken() {
-    console.log(`\n🔄 [SYSTEM AUTO-HEAL] Meminta tiket akses baru ke server auth...`);
+    console.log(`\n🔄 [SYSTEM AUTO-HEAL] Token expired! Mengambil tiket akses fresh...`);
     try {
         const response = await fetch(`${SUPA_URL}/auth/v1/token?grant_type=refresh_token`, {
             method: 'POST',
@@ -33,7 +33,7 @@ async function autoRefreshToken() {
             AUTH_BEARER = `Bearer ${data.access_token}`; 
             REFRESH_TOKEN = data.refresh_token; 
             HEADERS_SILUMAN.authorization = AUTH_BEARER; 
-            console.log(`\x1b[32m✅ [HEAL SUKSES] Tiket diperbarui! Script siap tempur kembali.\x1b[0m\n`);
+            console.log(`\x1b[32m✅ [HEAL SUKSES] Tiket diperbarui! Siap gas poll.\x1b[0m\n`);
             return true;
         }
     } catch (e) {}
@@ -61,7 +61,7 @@ function logDaftarPemainBaru(prefix, dataMurni) {
 }
 
 async function jalankanProsesSbcOtomatis() {
-    console.log(`⚙️ [SBC INSPECTOR] Memindai gudang ampas dengan rumus valid: 5 Silver + 3 Bronze...`);
+    console.log(`⚙️ [SBC INSPECTOR] Memindai gudang ampas khusus cadangan mati (Form === 0)...`);
     try {
         const resRos = await fetch(`${SUPA_URL}/rest/v1/lc_roster?select=*`, { headers: HEADERS_SILUMAN });
         const rosterMentah = await resRos.json();
@@ -74,6 +74,7 @@ async function jalankanProsesSbcOtomatis() {
 
         let countGoldProtected = 0;
         let countOvrProtected = 0;
+        let countActiveRotationProtected = 0;
         let countBlacklistedProtected = 0;
         const kandidatSbc = [];
 
@@ -82,16 +83,19 @@ async function jalankanProsesSbcOtomatis() {
             if (c) {
                 const pId = Number(o.player_id);
                 const isBlacklisted = SBC_BLACKLIST.has(pId);
+                const isRotasiAktif = (o.form ?? 0) !== 0; // 🎯 Jika form berubah dari 0, berarti dia skuad inti/pernah main
                 
                 const totalOvr = (c.ovr != null ? c.ovr : 60) + ((o.star || 1) - 1) * 3;
                 const isGoldAtauDeity = c.tier === "gold" || c.tier === "legendary";
                 const isOvrTinggi = totalOvr >= 75;
 
                 if (isBlacklisted) countBlacklistedProtected++;
+                else if (isRotasiAktif) countActiveRotationProtected++;
                 else if (isGoldAtauDeity) countGoldProtected++;
                 else if (isOvrTinggi) countOvrProtected++;
 
-                const isAsetBerharga = isBlacklisted || isOvrTinggi || isGoldAtauDeity;
+                // Kartu AMAN hanya jika: Cadangan murni (form === 0), bukan Gold+, OVR < 75, dan ga di-blacklist
+                const isAsetBerharga = isBlacklisted || isRotasiAktif || isOvrTinggi || isGoldAtauDeity;
 
                 if (!isAsetBerharga) {
                     kandidatSbc.push({ player_id: pId, name: c.name, ovr: totalOvr, tier: String(c.tier || "bronze").toLowerCase() });
@@ -99,19 +103,19 @@ async function jalankanProsesSbcOtomatis() {
             }
         });
 
-        console.log(`🛡️ [BRANKAS SECURE] Terkunci Aman: \x1b[33m${countGoldProtected} Gold\x1b[0m | \x1b[36m${countOvrProtected} OVR 75+\x1b[0m | \x1b[35m${countBlacklistedProtected} Skuad Utama Terdeteksi\x1b[0m`);
+        console.log(`🛡️ [BRANKAS SECURE] Terkunci: ${countGoldProtected} Gold | ${countOvrProtected} OVR 75+ | ${countActiveRotationProtected} Skuad Inti (Form ≠ 0) | ${countBlacklistedProtected} Blacklist`);
 
         const silverSampah = kandidatSbc.filter(p => p.ovr >= 67);
         const bronzeSampah = kandidatSbc.filter(p => p.ovr <= 66);
 
-        console.log(`📊 [SBC STATS] Keranjang Sampah -> Punya: \x1b[34m${silverSampah.length}/5 Silver\x1b[0m | \x1b[31m${bronzeSampah.length}/3 Bronze\x1b[0m`);
+        console.log(`📊 [SBC STATS] Sampah Bugar -> Punya: \x1b[34m${silverSampah.length}/5 Silver\x1b[0m | \x1b[31m${bronzeSampah.length}/3 Bronze\x1b[0m`);
 
         if (silverSampah.length >= 5 && bronzeSampah.length >= 3) {
             const listTumbalResmi = [];
             for (let i = 0; i < 5; i++) listTumbalResmi.push({ player_id: silverSampah[i].player_id, star: 1 });
             for (let i = 0; i < 3; i++) listTumbalResmi.push({ player_id: bronzeSampah[i].player_id, star: 1 });
 
-            console.log(`🔥 [AUTO-SBC EXECUTE] Mengirim paket tumbal (5 Silver + 3 Bronze) ke server...`);
+            console.log(`🔥 [AUTO-SBC EXECUTE] Mengirim paket tumbal 100% aman ke server...`);
             const response = await fetch(`${SUPA_URL}/functions/v1/submit-sbc`, { method: 'POST', headers: HEADERS_SILUMAN, body: JSON.stringify({ sbc_id: "silver_exch", cards: listTumbalResmi }) });
             
             if (response.ok) {
@@ -122,9 +126,9 @@ async function jalankanProsesSbcOtomatis() {
                 const errorText = await response.text();
                 console.log(`❌ [SBC FAILED] Server nolak. Alasan: ${errorText}`);
                 
-                // 🧠 MEMORY LEARNING: Masukkan seluruh ID tumbal gagal tadi ke blacklist tameng utama
+                // 🧠 MEMORY LEARNING SYSTEM: Jika kecolongan kartu inti, kunci ID-nya permanen
                 if (errorText.includes("active XI") || errorText.includes("sacrifice")) {
-                    console.log(`⚠️ [ANTI-CRASH] Sistem merekam kartu inti lu. Mem-blacklist ${listTumbalResmi.length} ID kartu dari list SBC berikutnya...`);
+                    console.log(`⚠️ [AUTO-LEARN] Merekam kartu skuad menyelinap. Mem-blacklist ID tumbal...`);
                     listTumbalResmi.forEach(t => SBC_BLACKLIST.add(t.player_id));
                 }
             }
@@ -154,23 +158,20 @@ async function autoBukaPackGachaSultan() {
 }
 
 async function jalankanLoopMatchGame() {
-    console.log(`\n\x1b[35m⚽ [ENGINE] PC LOKAL MODE V30 PRO RUNNING (ALUR ANTI-KEBALIK ACTIVE)...\x1b[0m\n`);
+    console.log(`\n\x1b[35m⚽ [ENGINE] PC LOKAL MODE V31 PRO RUNNING (ALUR ANTI-KEBALIK & STEALTH PROTECTION)...\x1b[0m\n`);
     while (true) {
         console.log(`--------------------------------------------------`);
         
         try {
-            // 🛡️ TAHAP 1 (ANTI-KEBALIK): Cek keaktifan token di awal iterasi sebelum nembak apapun!
+            // 🛡️ TAHAP 1: VALIDASI TOKEN DI AWAL ITERASI (Anti-Kebalik!)
             const checkProf = await fetch(`${SUPA_URL}/rest/v1/lc_profiles?select=coins`, { headers: HEADERS_SILUMAN });
             if (checkProf.status === 401) {
                 const suksesHeal = await autoRefreshToken(); 
-                if (!suksesHeal) {
-                    console.log(`🛑 [FATAL] Gagal memperbarui tiket. Menunggu jeda 10 detik...`);
-                    await new Promise(r => setTimeout(r, 10000));
-                }
-                continue; // Ulang loop dari atas setelah token bugar kembali
+                if (!suksesHeal) await new Promise(r => setTimeout(r, 10000));
+                continue; // Restart loop dari atas dengan token bugar
             }
 
-            // 🚀 TAHAP 2: Kickoff Pertandingan
+            // 🚀 TAHAP 2: Kickoff Match
             console.log(`🚀 [MATCH #${matchCounter}] Menembak Kickoff Pertandingan...`);
             const response = await fetch(`${SUPA_URL}/functions/v1/resolve-match`, { method: 'POST', headers: HEADERS_SILUMAN });
             
@@ -181,10 +182,10 @@ async function jalankanLoopMatchGame() {
                 console.log(`⚽ Hasil: ${statusWarna} [ ${res.ga ?? 0} - ${res.gb ?? 0} ] | MMR: \x1b[36m${res.newMmr}\x1b[0m`);
                 matchCounter++;
             } else {
-                console.log(`❌ [MATCH FAILED] Gagal tanding. Cek stamina skuad utama lu di web.`);
+                console.log(`❌ [MATCH FAILED] Gagal tanding. Cek stamina skuad utama lu di web game.`);
             }
 
-            // 🪙 TAHAP 3: Log Isi Dompet & Auto-Gacha
+            // 🪙 TAHAP 3: Monitor Wallet & Auto Gacha
             if (checkProf.ok) {
                 const profData = await checkProf.json();
                 const totalCoinSekarang = profData[0]?.coins ?? 0;
@@ -195,7 +196,7 @@ async function jalankanLoopMatchGame() {
                 }
             }
 
-            // 🔥 TAHAP 4: Jalankan SBC Otomatis dengan Tameng Dynamic-Learning
+            // 🔥 TAHAP 4: Eksekusi SBC Pake Filter Cadangan Mati + Auto-Learn Blacklist
             await jalankanProsesSbcOtomatis();
 
         } catch (e) {
